@@ -3,6 +3,7 @@ import { MessagePayload } from '../types';
 
 let room: any;
 let sendAction: any;
+let broadcastChannel: BroadcastChannel | null = null;
 
 const APP_ID = 'nexus-p2p-chat-v1';
 
@@ -11,17 +12,35 @@ export const initP2P = (
   onMessageReceived: (payload: MessagePayload) => void,
   onPeerUpdate: (peerCount: number) => void
 ) => {
-  // Initialize the room
+  // --- 1. BroadcastChannel (Local Tabs) ---
+  // This allows tabs on the same browser to talk instantly without internet
+  try {
+    const channelName = `nexus_local_${APP_ID}_${roomId}`;
+    broadcastChannel = new BroadcastChannel(channelName);
+    
+    broadcastChannel.onmessage = (event) => {
+      if (event.data && event.data.type === 'CHAT_MSG') {
+        // console.log('[BroadcastChannel] Received:', event.data.payload);
+        onMessageReceived(event.data.payload);
+      }
+    };
+  } catch (e) {
+    console.warn("BroadcastChannel not supported:", e);
+  }
+
+  // --- 2. Trystero (WebRTC over Torrent Trackers) ---
+  // This connects different devices over the internet
   const config = { appId: APP_ID };
+  
+  // Using the torrent strategy (imported in index.html)
   room = joinRoom(config, roomId);
 
-  // Create an action for chat messages
   const [send, get] = room.makeAction('chat');
   sendAction = send;
 
-  // Listen for incoming messages
+  // Listen for P2P messages
   get((data: MessagePayload, peerId: string) => {
-    console.log('Received P2P message from:', peerId);
+    // console.log('[Trystero] Received from:', peerId);
     onMessageReceived(data);
   });
 
@@ -39,16 +58,26 @@ export const initP2P = (
   // Initial count
   updatePeerCount(onPeerUpdate);
 
-  // Return a cleanup function
+  // Cleanup
   return () => {
     if (room) {
       room.leave();
       room = null;
     }
+    if (broadcastChannel) {
+      broadcastChannel.close();
+      broadcastChannel = null;
+    }
   };
 };
 
 export const broadcastMessage = (payload: MessagePayload) => {
+  // 1. Send to local tabs
+  if (broadcastChannel) {
+    broadcastChannel.postMessage({ type: 'CHAT_MSG', payload });
+  }
+
+  // 2. Send to internet peers
   if (sendAction) {
     sendAction(payload);
   } else {

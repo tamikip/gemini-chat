@@ -19,6 +19,8 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
   const [summaryText, setSummaryText] = useState('');
   const [isSummarizing, setIsSummarizing] = useState(false);
 
+  // Dedup Set to prevent processing the same message ID twice (from different channels)
+  const processedMessageIds = useRef<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Auto-scroll to bottom
@@ -28,7 +30,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
 
   // Initialize P2P Connection
   useEffect(() => {
-    // Initial System Message
+    // Reset messages and dedupe set on room change
     setMessages([
       {
         id: 'sys-init',
@@ -40,17 +42,24 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
       },
       {
         id: 'sys-wait',
-        text: 'Waiting for peers to join...',
+        text: 'Waiting for peers to join (Broadcast & P2P)...',
         senderId: 'system',
         senderType: SenderType.SYSTEM,
         timestamp: Date.now() + 100,
         type: MessageType.SYSTEM,
       }
     ]);
+    processedMessageIds.current = new Set();
 
     const cleanup = initP2P(
       roomId,
       (payload: MessagePayload) => {
+        // Deduplication check
+        if (processedMessageIds.current.has(payload.id)) {
+          return;
+        }
+        processedMessageIds.current.add(payload.id);
+
         // Handle incoming message
         const newMsg: Message = {
           id: payload.id,
@@ -96,6 +105,9 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
     const timestamp = Date.now();
     const msgId = `${currentUser.id}-${timestamp}`;
 
+    // Mark as processed so we don't re-add it if we receive our own broadcast
+    processedMessageIds.current.add(msgId);
+
     // 1. Update Local UI
     const userMsg: Message = {
       id: msgId,
@@ -107,7 +119,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
     };
     setMessages((prev) => [...prev, userMsg]);
 
-    // 2. Broadcast to Peers
+    // 2. Broadcast to Peers (Local & Remote)
     const payload: MessagePayload = {
       id: msgId,
       text: inputText,
@@ -234,7 +246,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
              Encrypted Channel: <span className="text-nexus-400">{roomId}</span>
            </p>
            <p className="text-[10px] text-gray-500">
-             Status: {peerCount > 0 ? "Online" : "Searching for peers..."}
+             Status: {peerCount > 0 ? "Online (P2P Connected)" : "Broadcasting (Hybrid Mode)..."}
            </p>
         </div>
       </div>
