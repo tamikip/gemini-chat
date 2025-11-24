@@ -10,17 +10,23 @@ export const JoinScreen: React.FC<JoinScreenProps> = ({ onJoin }) => {
   const [username, setUsername] = useState('');
   const [roomId, setRoomId] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState('Connect to Node');
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!username.trim() || !roomId.trim()) return;
     
     setIsLoading(true);
-    // Simulate connection delay
+    setLoadingText(`Searching Room ${roomId}...`);
+    
+    // Simulate connection/matching delay
     setTimeout(() => {
-      onJoin(username, roomId);
-      setIsLoading(false);
-    }, 800);
+        setLoadingText('Match Found. Connecting...');
+        setTimeout(() => {
+            onJoin(username, roomId);
+            setIsLoading(false);
+        }, 800);
+    }, 1200);
   };
 
   return (
@@ -32,15 +38,15 @@ export const JoinScreen: React.FC<JoinScreenProps> = ({ onJoin }) => {
       <div className="w-full max-w-md bg-nexus-800/80 backdrop-blur-xl border border-nexus-600 rounded-2xl p-8 shadow-2xl z-10">
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-nexus-400 to-nexus-accent">
-            Nexus Link
+            Nexus P2P
           </h1>
-          <p className="text-gray-400 mt-2 text-sm">Secure P2P Chat Environment</p>
+          <p className="text-gray-400 mt-2 text-sm">Decentralized Room Matching</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <Input 
-            label="Display Name" 
-            placeholder="Enter your alias..." 
+            label="Identity Alias" 
+            placeholder="Enter your username..." 
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             required
@@ -48,8 +54,8 @@ export const JoinScreen: React.FC<JoinScreenProps> = ({ onJoin }) => {
           />
           
           <Input 
-            label="Room ID" 
-            placeholder="e.g. 8080, room-alpha..." 
+            label="Room Frequency (ID)" 
+            placeholder="e.g. 7734, alpha-squad..." 
             value={roomId}
             onChange={(e) => setRoomId(e.target.value)}
             required
@@ -61,17 +67,16 @@ export const JoinScreen: React.FC<JoinScreenProps> = ({ onJoin }) => {
             isLoading={isLoading}
             disabled={!username.trim() || !roomId.trim()}
           >
-            Connect to Node
+            {isLoading ? loadingText : 'Start Matching'}
           </Button>
 
           <div className="mt-6 p-4 bg-nexus-900/50 rounded-lg border border-nexus-700/50">
             <h3 className="text-xs font-semibold text-nexus-400 uppercase tracking-wider mb-2">
-              System Info
+              Protocol Info
             </h3>
             <p className="text-xs text-gray-500 leading-relaxed">
-              This environment uses an encrypted conceptual channel. 
-              If no peer is found on the matched ID, an AI emulator (Gemini 2.5) 
-              can be activated for connectivity testing.
+              Enter a unique Room ID to match with peers. 
+              If the room is empty, a Gemini-powered node will emulate a peer to maintain link integrity.
             </p>
           </div>
         </form>

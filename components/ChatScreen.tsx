@@ -14,7 +14,7 @@ interface ChatScreenProps {
 export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onLeave }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [isAiMode, setIsAiMode] = useState(false);
+  const [isAiMode, setIsAiMode] = useState(true); // Default to True for immediate engagement
   const [isTyping, setIsTyping] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
   const [summaryText, setSummaryText] = useState('');
@@ -27,26 +27,79 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
-  // Initialize room
+  // Initialize room and simulate peer connection
   useEffect(() => {
     setMessages([
       {
         id: 'sys-init',
-        text: `Connected to Room: ${roomId}`,
+        text: `Channel established on Room: ${roomId}`,
         senderId: 'system',
         senderType: SenderType.SYSTEM,
         timestamp: Date.now(),
         type: MessageType.SYSTEM,
       },
       {
-        id: 'sys-info',
-        text: 'Waiting for peer connection...',
+        id: 'sys-wait',
+        text: 'Broadcasting presence...',
         senderId: 'system',
         senderType: SenderType.SYSTEM,
         timestamp: Date.now() + 100,
         type: MessageType.SYSTEM,
       }
     ]);
+
+    // Simulate peer finding the room
+    const connectionTimer = setTimeout(() => {
+      setMessages(prev => [...prev, {
+        id: 'sys-found',
+        text: 'Peer matched! Connection secured.',
+        senderId: 'system',
+        senderType: SenderType.SYSTEM,
+        timestamp: Date.now(),
+        type: MessageType.SYSTEM,
+      }]);
+
+      // Simulate peer greeting if no user input yet
+      const greetingTimer = setTimeout(async () => {
+        setIsTyping(true);
+        try {
+          // Initial greeting prompt context
+          const fakeHistory: Message[] = [{
+             id: 'sys-context',
+             text: `I just joined Room ${roomId}. Say hello nicely.`,
+             senderId: currentUser.id, // Pretend user prompted it for context
+             senderType: SenderType.SELF,
+             timestamp: Date.now(),
+             type: MessageType.TEXT
+          }];
+          
+          const greeting = await generatePeerResponse(fakeHistory, roomId);
+          
+          setMessages(prev => {
+             // Avoid duplicate greetings if user typed fast
+             if (prev.some(m => m.senderType === SenderType.SELF)) return prev;
+             
+             return [...prev, {
+               id: 'peer-greet',
+               text: greeting,
+               senderId: AI_PEER_ID,
+               senderType: SenderType.PEER,
+               timestamp: Date.now(),
+               type: MessageType.TEXT,
+             }];
+          });
+        } catch(e) {
+          console.error(e);
+        } finally {
+          setIsTyping(false);
+        }
+      }, 1500);
+
+      return () => clearTimeout(greetingTimer);
+
+    }, 2000);
+
+    return () => clearTimeout(connectionTimer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -71,8 +124,6 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
       const delay = 1000 + Math.random() * 1000;
       
       try {
-        // We need to pass the state *including* the new message, but setState is async.
-        // So we recreate the array locally for the service call.
         const currentHistory = [...messages, userMsg];
         const responseText = await generatePeerResponse(currentHistory, roomId);
         
@@ -102,26 +153,15 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
   };
 
   const toggleAiMode = () => {
-    if (!isAiMode) {
-      setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        text: 'Gemini Agent activated as Peer.',
-        senderId: 'system',
-        senderType: SenderType.SYSTEM,
-        timestamp: Date.now(),
-        type: MessageType.SYSTEM,
-      }]);
-    } else {
-       setMessages(prev => [...prev, {
-        id: Date.now().toString(),
-        text: 'Gemini Agent disconnected.',
-        senderId: 'system',
-        senderType: SenderType.SYSTEM,
-        timestamp: Date.now(),
-        type: MessageType.SYSTEM,
-      }]);
-    }
     setIsAiMode(!isAiMode);
+    setMessages(prev => [...prev, {
+      id: Date.now().toString(),
+      text: !isAiMode ? 'Peer Auto-Response: ENABLED' : 'Peer Auto-Response: DISABLED',
+      senderId: 'system',
+      senderType: SenderType.SYSTEM,
+      timestamp: Date.now(),
+      type: MessageType.SYSTEM,
+    }]);
   };
 
   const handleSummarize = async () => {
@@ -137,12 +177,14 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
       {/* Header */}
       <header className="h-16 border-b border-nexus-700 bg-nexus-800/90 backdrop-blur flex items-center justify-between px-4 lg:px-6 z-20 shadow-md">
         <div className="flex items-center gap-3">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+          <div className="relative">
+            <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
+            <div className="absolute top-0 left-0 w-2.5 h-2.5 rounded-full bg-green-500 animate-ping opacity-75"></div>
+          </div>
           <div>
-            <h2 className="font-bold text-lg tracking-wide">Room: {roomId}</h2>
-            <p className="text-xs text-gray-400 flex items-center gap-1">
-              User: <span className="text-nexus-400">{currentUser.username}</span>
-            </p>
+            <h2 className="font-bold text-lg tracking-wide flex items-center gap-2">
+              Room <span className="font-mono text-nexus-400 bg-nexus-900 px-2 py-0.5 rounded text-sm">{roomId}</span>
+            </h2>
           </div>
         </div>
         
@@ -161,24 +203,24 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
             variant={isAiMode ? "primary" : "secondary"}
             onClick={toggleAiMode}
             className="text-xs px-3"
-            title={isAiMode ? "Disable AI Peer" : "Enable AI Peer"}
+            title="Toggle Simulated Peer"
           >
-             {isAiMode ? 'AI Active' : 'Enable AI'}
+             {isAiMode ? 'Peer Active' : 'Peer Silent'}
           </Button>
           <Button variant="danger" onClick={onLeave} className="text-xs px-3">
-            Leave
+            Disconnect
           </Button>
         </div>
       </header>
 
-      {/* Summary Modal (Inline for simplicity) */}
+      {/* Summary Modal */}
       {showSummary && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-nexus-800 border border-nexus-600 rounded-xl p-6 max-w-lg w-full shadow-2xl">
-            <h3 className="text-xl font-bold mb-4 text-nexus-400">Gemini Summary</h3>
-            <div className="bg-nexus-900/50 p-4 rounded-lg min-h-[100px] text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">
+          <div className="bg-nexus-800 border border-nexus-600 rounded-xl p-6 max-w-lg w-full shadow-2xl animate-fade-in">
+            <h3 className="text-xl font-bold mb-4 text-nexus-400">Mission Report</h3>
+            <div className="bg-nexus-900/50 p-4 rounded-lg min-h-[100px] text-gray-300 text-sm leading-relaxed whitespace-pre-wrap max-h-[60vh] overflow-y-auto custom-scrollbar">
               {isSummarizing ? (
-                 <div className="flex items-center justify-center h-full gap-2">
+                 <div className="flex items-center justify-center h-full gap-2 py-8">
                     <span className="w-2 h-2 bg-nexus-400 rounded-full animate-bounce"></span>
                     <span className="w-2 h-2 bg-nexus-400 rounded-full animate-bounce delay-75"></span>
                     <span className="w-2 h-2 bg-nexus-400 rounded-full animate-bounce delay-150"></span>
@@ -186,7 +228,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
               ) : summaryText}
             </div>
             <div className="mt-4 flex justify-end">
-              <Button onClick={() => setShowSummary(false)}>Close</Button>
+              <Button onClick={() => setShowSummary(false)}>Close Report</Button>
             </div>
           </div>
         </div>
@@ -198,7 +240,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
           <MessageBubble key={msg.id} message={msg} />
         ))}
         {isTyping && (
-          <div className="flex justify-start mb-4">
+          <div className="flex justify-start mb-4 animate-fade-in">
             <div className="bg-nexus-700 rounded-2xl rounded-tl-sm px-4 py-3 border border-nexus-600 flex gap-1 items-center">
               <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></span>
               <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></span>
@@ -214,7 +256,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
         <div className="max-w-4xl mx-auto flex gap-3">
           <input
             className="flex-1 bg-nexus-900/50 border border-nexus-600 text-white placeholder-gray-500 rounded-xl px-4 py-3 focus:outline-none focus:border-nexus-400 focus:ring-1 focus:ring-nexus-400 transition-all"
-            placeholder="Type a message..."
+            placeholder="Type your message..."
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             onKeyDown={handleKeyDown}
@@ -229,9 +271,12 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
             </svg>
           </Button>
         </div>
-        <div className="max-w-4xl mx-auto mt-2 text-center">
+        <div className="max-w-4xl mx-auto mt-2 text-center flex justify-center gap-4">
            <p className="text-[10px] text-gray-500">
-             {isAiMode ? "AI Simulation Active (Gemini 2.5)" : "P2P Mode (Simulated for Demo)"}
+             Encrypted Channel: <span className="text-nexus-400">{roomId}</span>
+           </p>
+           <p className="text-[10px] text-gray-500">
+             Node Status: {isAiMode ? "Peer Linked" : "Standby"}
            </p>
         </div>
       </div>
