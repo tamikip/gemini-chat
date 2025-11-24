@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Message, User, SenderType, MessageType } from '../types';
-import { generatePeerResponse, summarizeConversation } from '../services/geminiService';
+import { Message, User, SenderType, MessageType, MessagePayload } from '../types';
+import { summarizeConversation } from '../services/geminiService';
+import { initP2P, broadcastMessage } from '../services/p2pService';
 import { MessageBubble } from './MessageBubble';
 import { Button } from './Button';
-import { AI_PEER_ID } from '../constants';
 
 interface ChatScreenProps {
   roomId: string;
@@ -14,8 +14,7 @@ interface ChatScreenProps {
 export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onLeave }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [isAiMode, setIsAiMode] = useState(true); // Default to True for immediate engagement
-  const [isTyping, setIsTyping] = useState(false);
+  const [peerCount, setPeerCount] = useState(0);
   const [showSummary, setShowSummary] = useState(false);
   const [summaryText, setSummaryText] = useState('');
   const [isSummarizing, setIsSummarizing] = useState(false);
@@ -25,14 +24,15 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
   // Auto-scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isTyping]);
+  }, [messages]);
 
-  // Initialize room and simulate peer connection
+  // Initialize P2P Connection
   useEffect(() => {
+    // Initial System Message
     setMessages([
       {
         id: 'sys-init',
-        text: `Channel established on Room: ${roomId}`,
+        text: `Secure Channel Established. Room: ${roomId}`,
         senderId: 'system',
         senderType: SenderType.SYSTEM,
         timestamp: Date.now(),
@@ -40,7 +40,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
       },
       {
         id: 'sys-wait',
-        text: 'Broadcasting presence...',
+        text: 'Waiting for peers to join...',
         senderId: 'system',
         senderType: SenderType.SYSTEM,
         timestamp: Date.now() + 100,
@@ -48,101 +48,76 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
       }
     ]);
 
-    // Simulate peer finding the room
-    const connectionTimer = setTimeout(() => {
-      setMessages(prev => [...prev, {
-        id: 'sys-found',
-        text: 'Peer matched! Connection secured.',
-        senderId: 'system',
-        senderType: SenderType.SYSTEM,
-        timestamp: Date.now(),
-        type: MessageType.SYSTEM,
-      }]);
-
-      // Simulate peer greeting if no user input yet
-      const greetingTimer = setTimeout(async () => {
-        setIsTyping(true);
-        try {
-          // Initial greeting prompt context
-          const fakeHistory: Message[] = [{
-             id: 'sys-context',
-             text: `I just joined Room ${roomId}. Say hello nicely.`,
-             senderId: currentUser.id, // Pretend user prompted it for context
-             senderType: SenderType.SELF,
-             timestamp: Date.now(),
-             type: MessageType.TEXT
-          }];
-          
-          const greeting = await generatePeerResponse(fakeHistory, roomId);
-          
-          setMessages(prev => {
-             // Avoid duplicate greetings if user typed fast
-             if (prev.some(m => m.senderType === SenderType.SELF)) return prev;
+    const cleanup = initP2P(
+      roomId,
+      (payload: MessagePayload) => {
+        // Handle incoming message
+        const newMsg: Message = {
+          id: payload.id,
+          text: payload.text,
+          senderId: payload.senderId,
+          senderType: SenderType.PEER, // We received it, so it's a PEER
+          username: payload.username,
+          timestamp: payload.timestamp,
+          type: MessageType.TEXT,
+        };
+        setMessages(prev => [...prev, newMsg]);
+      },
+      (count) => {
+        setPeerCount(count);
+        // Add system message if peer count changes positively
+        if (count > 0) {
+           setMessages(prev => {
+             // Only add if the last message wasn't already a "connected" message to avoid spam
+             const last = prev[prev.length - 1];
+             if (last && last.text.includes(`${count} Peer`)) return prev;
              
              return [...prev, {
-               id: 'peer-greet',
-               text: greeting,
-               senderId: AI_PEER_ID,
-               senderType: SenderType.PEER,
+               id: `sys-peer-${Date.now()}`,
+               text: `Network Update: ${count} Peer(s) Connected`,
+               senderId: 'system',
+               senderType: SenderType.SYSTEM,
                timestamp: Date.now(),
-               type: MessageType.TEXT,
+               type: MessageType.SYSTEM,
              }];
-          });
-        } catch(e) {
-          console.error(e);
-        } finally {
-          setIsTyping(false);
+           });
         }
-      }, 1500);
+      }
+    );
 
-      return () => clearTimeout(greetingTimer);
+    return () => {
+      cleanup();
+    };
+  }, [roomId]);
 
-    }, 2000);
-
-    return () => clearTimeout(connectionTimer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleSendMessage = async () => {
+  const handleSendMessage = () => {
     if (!inputText.trim()) return;
 
+    const timestamp = Date.now();
+    const msgId = `${currentUser.id}-${timestamp}`;
+
+    // 1. Update Local UI
     const userMsg: Message = {
-      id: Date.now().toString(),
+      id: msgId,
       text: inputText,
       senderId: currentUser.id,
       senderType: SenderType.SELF,
-      timestamp: Date.now(),
+      timestamp: timestamp,
       type: MessageType.TEXT,
     };
-
     setMessages((prev) => [...prev, userMsg]);
-    setInputText('');
 
-    if (isAiMode) {
-      setIsTyping(true);
-      // Simulate network delay + thinking time
-      const delay = 1000 + Math.random() * 1000;
-      
-      try {
-        const currentHistory = [...messages, userMsg];
-        const responseText = await generatePeerResponse(currentHistory, roomId);
-        
-        setTimeout(() => {
-          const aiMsg: Message = {
-            id: (Date.now() + 1).toString(),
-            text: responseText,
-            senderId: AI_PEER_ID,
-            senderType: SenderType.PEER,
-            timestamp: Date.now(),
-            type: MessageType.TEXT,
-          };
-          setMessages((prev) => [...prev, aiMsg]);
-          setIsTyping(false);
-        }, delay);
-      } catch (e) {
-        setIsTyping(false);
-      }
-    }
+    // 2. Broadcast to Peers
+    const payload: MessagePayload = {
+      id: msgId,
+      text: inputText,
+      senderId: currentUser.id,
+      username: currentUser.username,
+      timestamp: timestamp,
+    };
+    broadcastMessage(payload);
+
+    setInputText('');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -150,18 +125,6 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
       e.preventDefault();
       handleSendMessage();
     }
-  };
-
-  const toggleAiMode = () => {
-    setIsAiMode(!isAiMode);
-    setMessages(prev => [...prev, {
-      id: Date.now().toString(),
-      text: !isAiMode ? 'Peer Auto-Response: ENABLED' : 'Peer Auto-Response: DISABLED',
-      senderId: 'system',
-      senderType: SenderType.SYSTEM,
-      timestamp: Date.now(),
-      type: MessageType.SYSTEM,
-    }]);
   };
 
   const handleSummarize = async () => {
@@ -178,8 +141,8 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
       <header className="h-16 border-b border-nexus-700 bg-nexus-800/90 backdrop-blur flex items-center justify-between px-4 lg:px-6 z-20 shadow-md">
         <div className="flex items-center gap-3">
           <div className="relative">
-            <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse"></div>
-            <div className="absolute top-0 left-0 w-2.5 h-2.5 rounded-full bg-green-500 animate-ping opacity-75"></div>
+            <div className={`w-2.5 h-2.5 rounded-full ${peerCount > 0 ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
+            {peerCount > 0 && <div className="absolute top-0 left-0 w-2.5 h-2.5 rounded-full bg-green-500 animate-ping opacity-75"></div>}
           </div>
           <div>
             <h2 className="font-bold text-lg tracking-wide flex items-center gap-2">
@@ -198,15 +161,11 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
             </svg>
+            <span className="hidden md:inline ml-1 text-xs">Summary</span>
           </Button>
-          <Button 
-            variant={isAiMode ? "primary" : "secondary"}
-            onClick={toggleAiMode}
-            className="text-xs px-3"
-            title="Toggle Simulated Peer"
-          >
-             {isAiMode ? 'Peer Active' : 'Peer Silent'}
-          </Button>
+          <div className="bg-nexus-900 px-3 py-1.5 rounded-lg border border-nexus-700 text-xs text-nexus-400 font-mono">
+            {peerCount} Peers
+          </div>
           <Button variant="danger" onClick={onLeave} className="text-xs px-3">
             Disconnect
           </Button>
@@ -237,17 +196,16 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-2 custom-scrollbar">
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
-        {isTyping && (
-          <div className="flex justify-start mb-4 animate-fade-in">
-            <div className="bg-nexus-700 rounded-2xl rounded-tl-sm px-4 py-3 border border-nexus-600 flex gap-1 items-center">
-              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></span>
-              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></span>
-              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150"></span>
-            </div>
+          <div key={msg.id}>
+             {/* Show username for peers */}
+             {msg.senderType === SenderType.PEER && msg.username && (
+               <div className="flex justify-start mb-0.5 px-1">
+                  <span className="text-[10px] text-nexus-400 font-bold">{msg.username}</span>
+               </div>
+             )}
+             <MessageBubble message={msg} />
           </div>
-        )}
+        ))}
         <div ref={messagesEndRef} />
       </div>
 
@@ -263,7 +221,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
           />
           <Button 
             onClick={handleSendMessage} 
-            disabled={!inputText.trim() || isTyping}
+            disabled={!inputText.trim()}
             className="px-6 rounded-xl"
           >
             <svg className="w-5 h-5 transform rotate-90" fill="currentColor" viewBox="0 0 20 20">
@@ -276,7 +234,7 @@ export const ChatScreen: React.FC<ChatScreenProps> = ({ roomId, currentUser, onL
              Encrypted Channel: <span className="text-nexus-400">{roomId}</span>
            </p>
            <p className="text-[10px] text-gray-500">
-             Node Status: {isAiMode ? "Peer Linked" : "Standby"}
+             Status: {peerCount > 0 ? "Online" : "Searching for peers..."}
            </p>
         </div>
       </div>

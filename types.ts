@@ -22,6 +22,15 @@ export interface Message {
   senderType: SenderType;
   timestamp: number;
   type: MessageType;
+  username?: string; // Optional for display
+}
+
+export interface MessagePayload {
+  id: string;
+  text: string;
+  senderId: string;
+  username: string;
+  timestamp: number;
 }
 
 export interface RoomState {
