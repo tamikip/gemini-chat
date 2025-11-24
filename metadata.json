@@ -1,0 +1,5 @@
+{
+  "name": "Nexus P2P Chat",
+  "description": "A modern, AI-enhanced chat interface simulating P2P room matching using Gemini for peer emulation and conversation assistance.",
+  "requestFramePermissions": []
+}
